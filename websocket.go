@@ -140,8 +140,6 @@ type WebSocketClient struct {
 	wg *sync.WaitGroup
 	// Stop subscribing channel
 	done chan struct{}
-	// Heartbeat done
-	hdone chan struct{}
 	// Pong channel to check pong message
 	pongs chan string
 	// ACK channel to check pong message
@@ -211,11 +209,15 @@ func (wc *WebSocketClient) Connect() (<-chan *WebSocketDownstreamMessage, <-chan
 	u := fmt.Sprintf("%s?%s", s.Endpoint, q.Encode())
 
 	// Ignore verify tls
-	websocket.DefaultDialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: wc.skipVerifyTls}
+	dialer := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 45 * time.Second,
+	}
+	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: wc.skipVerifyTls}
 
 	// Connect ws server
-	websocket.DefaultDialer.ReadBufferSize = 2048000 //2000 kb
-	wc.conn, _, err = websocket.DefaultDialer.Dial(u, nil)
+	dialer.ReadBufferSize = 2048000 //2000 kb
+	wc.conn, _, err = dialer.Dial(u, nil)
 	if err != nil {
 		return wc.messages, wc.errors, err
 	}
