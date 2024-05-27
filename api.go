@@ -6,6 +6,7 @@ package kucoin
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -186,7 +187,9 @@ func (as *ApiService) Call(request *Request) (*ApiResponse, error) {
 		}
 	}
 
-	rsp, err := as.requester.Request(request, request.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), request.Timeout)
+	defer cancel()
+	rsp, err := as.requester.Request(ctx, request)
 	if err != nil {
 		return nil, err
 	}

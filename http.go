@@ -134,7 +134,7 @@ func (r *Request) HttpRequest(ctx context.Context) (*http.Request, error) {
 
 // Requester contains Request() method, can launch a http request.
 type Requester interface {
-	Request(request *Request, timeout time.Duration) (*Response, error)
+	Request(ctx context.Context, request *Request) (*Response, error)
 }
 
 // A BasicRequester represents a basic implement of Requester by http.Client.
@@ -142,7 +142,7 @@ type BasicRequester struct {
 }
 
 // Request makes a http request.
-func (br *BasicRequester) Request(request *Request, timeout time.Duration) (*Response, error) {
+func (br *BasicRequester) Request(ctx context.Context, request *Request) (*Response, error) {
 	tr := httpClient.Transport
 	tc := tr.(*http.Transport).TLSClientConfig
 	if tc == nil {
@@ -151,8 +151,6 @@ func (br *BasicRequester) Request(request *Request, timeout time.Duration) (*Res
 		tc.InsecureSkipVerify = request.SkipVerifyTls
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	req, err := request.HttpRequest(ctx)
 	if err != nil {
 		return nil, err
