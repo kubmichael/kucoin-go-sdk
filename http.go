@@ -2,6 +2,7 @@ package kucoin
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,20 @@ type Request struct {
 	Header        http.Header
 	Timeout       time.Duration
 	SkipVerifyTls bool
+}
+
+var httpClient *http.Client
+
+func init() {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 100
+	t.MaxConnsPerHost = 100
+	t.MaxIdleConnsPerHost = 100
+
+	httpClient = &http.Client{
+		Transport: t,
+		Timeout:   30 * time.Second,
+	}
 }
 
 // NewRequest creates a instance of Request.
@@ -102,8 +117,8 @@ func (r *Request) FullURL() string {
 }
 
 // HttpRequest creates a instance of *http.Request.
-func (r *Request) HttpRequest() (*http.Request, error) {
-	req, err := http.NewRequest(r.Method, r.FullURL(), bytes.NewBuffer(r.Body))
+func (r *Request) HttpRequest(ctx context.Context) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, r.Method, r.FullURL(), bytes.NewBuffer(r.Body))
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +134,7 @@ func (r *Request) HttpRequest() (*http.Request, error) {
 
 // Requester contains Request() method, can launch a http request.
 type Requester interface {
-	Request(request *Request, timeout time.Duration) (*Response, error)
+	Request(ctx context.Context, request *Request) (*Response, error)
 }
 
 // A BasicRequester represents a basic implement of Requester by http.Client.
@@ -127,8 +142,8 @@ type BasicRequester struct {
 }
 
 // Request makes a http request.
-func (br *BasicRequester) Request(request *Request, timeout time.Duration) (*Response, error) {
-	tr := http.DefaultTransport
+func (br *BasicRequester) Request(ctx context.Context, request *Request) (*Response, error) {
+	tr := httpClient.Transport
 	tc := tr.(*http.Transport).TLSClientConfig
 	if tc == nil {
 		tc = &tls.Config{InsecureSkipVerify: request.SkipVerifyTls}
@@ -136,10 +151,7 @@ func (br *BasicRequester) Request(request *Request, timeout time.Duration) (*Res
 		tc.InsecureSkipVerify = request.SkipVerifyTls
 	}
 
-	cli := http.DefaultClient
-	cli.Transport, cli.Timeout = tr, timeout
-
-	req, err := request.HttpRequest()
+	req, err := request.HttpRequest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +165,7 @@ func (br *BasicRequester) Request(request *Request, timeout time.Duration) (*Res
 		logrus.Debugf("Sent a HTTP request#%d: %s", rid, string(dump))
 	}
 
-	rsp, err := cli.Do(req)
+	rsp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -147,13 +147,12 @@ type WebSocketClient struct {
 	// Error channel
 	errors chan error
 	// Downstream message channel
-	messages        chan *WebSocketDownstreamMessage
-	conn            *websocket.Conn
-	token           *WebSocketTokenModel
-	server          *WebSocketServerModel
-	enableHeartbeat bool
-	skipVerifyTls   bool
-	timeout         time.Duration
+	messages      chan *WebSocketDownstreamMessage
+	conn          *websocket.Conn
+	token         *WebSocketTokenModel
+	server        *WebSocketServerModel
+	skipVerifyTls bool
+	timeout       time.Duration
 }
 
 var defaultTimeout = time.Second * 5
@@ -210,11 +209,15 @@ func (wc *WebSocketClient) Connect() (<-chan *WebSocketDownstreamMessage, <-chan
 	u := fmt.Sprintf("%s?%s", s.Endpoint, q.Encode())
 
 	// Ignore verify tls
-	websocket.DefaultDialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: wc.skipVerifyTls}
+	dialer := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 45 * time.Second,
+	}
+	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: wc.skipVerifyTls}
 
 	// Connect ws server
-	websocket.DefaultDialer.ReadBufferSize = 2048000 //2000 kb
-	wc.conn, _, err = websocket.DefaultDialer.Dial(u, nil)
+	dialer.ReadBufferSize = 2048000 //2000 kb
+	wc.conn, _, err = dialer.Dial(u, nil)
 	if err != nil {
 		return wc.messages, wc.errors, err
 	}
@@ -237,8 +240,8 @@ func (wc *WebSocketClient) Connect() (<-chan *WebSocketDownstreamMessage, <-chan
 	}
 
 	wc.wg.Add(2)
-	go wc.read()
 	go wc.keepHeartbeat()
+	go wc.read()
 
 	return wc.messages, wc.errors, nil
 }
@@ -267,30 +270,41 @@ func (wc *WebSocketClient) read() {
 			switch m.Type {
 			case WelcomeMessage:
 			case PongMessage:
-				if wc.enableHeartbeat {
-					wc.pongs <- m.Id
+				select {
+				case wc.pongs <- m.Id:
+				default:
 				}
 			case AckMessage:
-				// log.Printf("Subscribed: %s==%s? %s", channel.Id, m.Id, channel.Topic)
-				wc.acks <- m.Id
+				select {
+				case wc.acks <- m.Id:
+				default:
+				}
 			case ErrorMessage:
-				wc.errors <- errors.Errorf("Error message: %s", ToJsonString(m))
+				select {
+				case wc.errors <- errors.Errorf("Error message: %s", ToJsonString(m)):
+				default:
+				}
 				return
 			case Message, Notice, Command:
-				wc.messages <- m
+				select {
+				case wc.messages <- m:
+				default:
+				}
 			default:
-				wc.errors <- errors.Errorf("Unknown message type: %s", m.Type)
+				select {
+				case wc.errors <- errors.Errorf("Unknown message type: %s", m.Type):
+				default:
+				}
 			}
 		}
 	}
 }
 
 func (wc *WebSocketClient) keepHeartbeat() {
-	wc.enableHeartbeat = true
 	// New ticker to send ping message
 	pt := time.NewTicker(time.Duration(wc.server.PingInterval)*time.Millisecond - time.Millisecond*200)
-	defer wc.wg.Done()
 	defer pt.Stop()
+	defer wc.wg.Done()
 
 	for {
 		select {
@@ -311,12 +325,14 @@ func (wc *WebSocketClient) keepHeartbeat() {
 			// Waiting (with timeout) for the server to response pong message
 			// If timeout, close this connection
 			select {
+			case <-wc.done:
+				return
 			case pid := <-wc.pongs:
 				if pid != p.Id {
 					wc.errors <- errors.Errorf("Invalid pong id %s, expect %s", pid, p.Id)
 					return
 				}
-			case <-time.After(time.Duration(wc.server.PingTimeout) * time.Millisecond):
+			case <-time.After(time.Duration(wc.server.PingTimeout*2) * time.Millisecond):
 				wc.errors <- errors.Errorf("Wait pong message timeout in %d ms", wc.server.PingTimeout)
 				return
 			}
