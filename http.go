@@ -3,11 +3,10 @@ package kucoin
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -143,21 +142,10 @@ type BasicRequester struct {
 
 // Request makes a http request.
 func (br *BasicRequester) Request(ctx context.Context, request *Request) (*Response, error) {
-	tr := httpClient.Transport
-	tc := tr.(*http.Transport).TLSClientConfig
-	if tc == nil {
-		tc = &tls.Config{InsecureSkipVerify: request.SkipVerifyTls}
-	} else {
-		tc.InsecureSkipVerify = request.SkipVerifyTls
-	}
-
 	req, err := request.HttpRequest(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Prevent re-use of TCP connections
-	// req.Close = true
-
 	rid := time.Now().UnixNano()
 
 	if DebugMode {
@@ -210,7 +198,7 @@ func (r *Response) ReadBody() ([]byte, error) {
 
 	r.body = make([]byte, 0)
 	defer r.Body.Close()
-	b, err := ioutil.ReadAll(r.Body)
+	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}
